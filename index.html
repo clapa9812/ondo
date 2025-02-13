@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>온습도 그래프</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
+        import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAwxStZNviIpSkQvkBAfRutkBX5gBZoUb4",
+            authDomain: "esp32-3e443.firebaseapp.com",
+            databaseURL: "https://esp32-3e443-default-rtdb.firebaseio.com",
+            projectId: "esp32-3e443",
+            storageBucket: "esp32-3e443.firebasestorage.app",
+            messagingSenderId: "594043014729",
+            appId: "1:594043014729:web:46584b1a83e905b6357998"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        document.getElementById("fetchData").addEventListener("click", fetchData);
+
+        let chartInstances = {};
+
+        function fetchData() {
+            const selectedDate = document.getElementById("datePicker").value;
+            const selectedInterval = parseInt(document.getElementById("intervalPicker").value);
+            const dbRef = ref(db, "sensor_data");
+            onValue(dbRef, (snapshot) => {
+                if (snapshot.exists()) {
+                    const data = snapshot.val();
+                    processData(data, selectedDate, selectedInterval);
+                } else {
+                    console.log("No data available");
+                }
+            });
+        }
+
+        function processData(data, selectedDate, interval) {
+            let timestamps = [];
+            let temperatures = [];
+            let humidities = [];
+
+            Object.keys(data).sort().forEach((year) => {
+                Object.keys(data[year]).forEach((month) => {
+                    Object.keys(data[year][month]).forEach((day) => {
+                        Object.keys(data[year][month][day]).forEach((hour) => {
+                            Object.keys(data[year][month][day][hour]).forEach((minute) => {
+                                const entry = data[year][month][day][hour][minute];
+                                const entryDate = new Date(year, month - 1, day, hour, minute);
+
+                                if (isNaN(entryDate.getTime())) {
+                                    console.log(`유효하지 않은 날짜: ${entryDate}`);
+                                    return;
+                                }
+
+                                const dateString = entryDate.toISOString().split('T')[0];
+                                const entryMinute = entryDate.getMinutes();  // 충돌 방지
+
+                                if (dateString === selectedDate && checkInterval(entryMinute, interval, entryDate)) {
+                                    timestamps.push(entryDate.toLocaleTimeString());
+                                    temperatures.push(entry.temperature);
+                                    humidities.push(entry.humidity);
+                                }
+                            });
+                        });
+                    });
+                });
+            });
+
+            updateChart("tempChart", timestamps, temperatures, "온도 (°C)", "red");
+            updateChart("humChart", timestamps, humidities, "습도 (%)", "blue");
+        }
+
+        function checkInterval(entryMinute, interval, entryDate) {
+            const hour = entryDate.getHours();
+            switch (interval) {
+                case 1:  // 1분마다
+                    return true;
+                case 2:  // 5분마다
+                    return entryMinute % 5 === 0;
+                case 3:  // 10분마다
+                    return entryMinute % 10 === 0;
+                case 4:  // 30분마다
+                    return entryMinute === 0 || entryMinute === 30;
+                case 5:  // 1시간마다
+                    return entryMinute === 0;
+                default:
+                    return false;
+            }
+        }
+
+        function updateChart(canvasId, timestamps, data, label, color) {
+            const ctx = document.getElementById(canvasId).getContext("2d");
+
+            if (chartInstances[canvasId]) {
+                chartInstances[canvasId].destroy();
+            }
+
+            chartInstances[canvasId] = new Chart(ctx, {
+                type: "line",
+                data: {
+                    labels: timestamps,
+                    datasets: [{ 
+                        label: label,
+                        data: data.map((value) => value !== null ? value : NaN),
+                        borderColor: color,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { title: { display: true, text: "시간" } },
+                        y: { title: { display: true, text: "값" } }
+                    }
+                }
+            });
+        }
+    </script>
+</head>
+<body>
+    <h1>ESP32 온습도 그래프</h1>
+    <label>날짜 선택: <input type="date" id="datePicker"></label>
+    <label>간격 선택: 
+        <select id="intervalPicker">
+            <option value="1">1분</option>
+            <option value="2">5분</option>
+            <option value="3">10분</option>
+            <option value="4">30분</option>
+            <option value="5">1시간</option>
+        </select>
+    </label>
+    <button id="fetchData">데이터 불러오기</button>
+    <h2>온도 그래프</h2>
+    <canvas id="tempChart"></canvas>
+    <h2>습도 그래프</h2>
+    <canvas id="humChart"></canvas>
+</body>
+</html>
