@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>온습도 그래프</title>
+    <title>온습도</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
@@ -26,58 +26,99 @@
 
         let chartInstances = {};
 
+        // 현재 날짜와 시간 표시 함수
+        function displayCurrentDateTime() {
+            const now = new Date();
+            const date = now.toLocaleDateString();
+            const time = now.toLocaleTimeString();
+            document.getElementById("currentDateTime").textContent = `현재 날짜: ${date} | 현재 시간: ${time}`;
+        }
+
+        // 현재 온도와 습도 표시 함수
+        function displayCurrentTempHum(latestTemperature, latestHumidity) {
+            document.getElementById("currentTemp").textContent = `현재  ${latestTemperature} °C`;
+            document.getElementById("currentHum").textContent = `현재  ${latestHumidity} %`;
+        }
+
         function fetchData() {
-            const selectedDate = document.getElementById("datePicker").value;
+            const selectedStartDate = document.getElementById("startDate").value;
+            const selectedEndDate = document.getElementById("endDate").value;
             const selectedInterval = parseInt(document.getElementById("intervalPicker").value);
+            const startTime = document.getElementById("startTime").value;
+            const endTime = document.getElementById("endTime").value;
+
             const dbRef = ref(db, "sensor_data");
             onValue(dbRef, (snapshot) => {
                 if (snapshot.exists()) {
                     const data = snapshot.val();
-                    processData(data, selectedDate, selectedInterval);
+                    processData(data, selectedStartDate, selectedEndDate, selectedInterval, startTime, endTime);
                 } else {
                     console.log("No data available");
                 }
             });
         }
 
-        function processData(data, selectedDate, interval) {
-            let timestamps = [];
-            let temperatures = [];
-            let humidities = [];
+        function processData(data, selectedStartDate, selectedEndDate, interval, startTime, endTime) {
+          let timestamps = [];
+          let temperatures = [];
+          let humidities = [];
+          let latestTemperature = null;
+          let latestHumidity = null;
+      
+          Object.keys(data).sort().forEach((year) => {
+              Object.keys(data[year]).forEach((month) => {
+                  Object.keys(data[year][month]).forEach((day) => {
+                      Object.keys(data[year][month][day]).forEach((hour) => {
+                          Object.keys(data[year][month][day][hour]).forEach((minute) => {
+                              const entry = data[year][month][day][hour][minute];
+                              const entryDate = new Date(year, month - 1, day, hour, minute);
+      
+                              const dateString = entryDate.toISOString().split('T')[0];
+                              const entryTime = entryDate.toTimeString().split(' ')[0]; // "HH:MM:SS" 형태로 시간만 추출
+      
+                              // 최신 온도와 습도 저장 (최신 데이터로 갱신)
+                              if (!latestTemperature || entryDate > latestTemperature.date) {
+                                  latestTemperature = { value: entry.temperature, date: entryDate };
+                              }
+                              if (!latestHumidity || entryDate > latestHumidity.date) {
+                                  latestHumidity = { value: entry.humidity, date: entryDate };
+                              }
+      
+                              // 선택한 날짜 범위와 시간대 범위가 맞는지 체크
+                              if (isDateInRange(dateString, selectedStartDate, selectedEndDate) && 
+                                  checkInterval(entryDate, interval) && 
+                                  isTimeInRange(entryTime, startTime, endTime)) {
+                                  timestamps.push(entryDate.toLocaleTimeString());
+                                  temperatures.push(entry.temperature);
+                                  humidities.push(entry.humidity);
+                              }
+                          });
+                      });
+                  });
+              });
+          });
+      
+          updateChart("tempChart", timestamps, temperatures, "온도 (°C)", "red");
+          updateChart("humChart", timestamps, humidities, "습도 (%)", "blue");
+      
+          // 현재 온도와 습도 최신화
+          displayCurrentTempHum(
+              latestTemperature ? latestTemperature.value : "없음", 
+              latestHumidity ? latestHumidity.value : "없음"
+          );
+      }
+      
 
-            Object.keys(data).sort().forEach((year) => {
-                Object.keys(data[year]).forEach((month) => {
-                    Object.keys(data[year][month]).forEach((day) => {
-                        Object.keys(data[year][month][day]).forEach((hour) => {
-                            Object.keys(data[year][month][day][hour]).forEach((minute) => {
-                                const entry = data[year][month][day][hour][minute];
-                                const entryDate = new Date(year, month - 1, day, hour, minute);
-
-                                if (isNaN(entryDate.getTime())) {
-                                    console.log(`유효하지 않은 날짜: ${entryDate}`);
-                                    return;
-                                }
-
-                                const dateString = entryDate.toISOString().split('T')[0];
-                                const entryMinute = entryDate.getMinutes();  // 충돌 방지
-
-                                if (dateString === selectedDate && checkInterval(entryMinute, interval, entryDate)) {
-                                    timestamps.push(entryDate.toLocaleTimeString());
-                                    temperatures.push(entry.temperature);
-                                    humidities.push(entry.humidity);
-                                }
-                            });
-                        });
-                    });
-                });
-            });
-
-            updateChart("tempChart", timestamps, temperatures, "온도 (°C)", "red");
-            updateChart("humChart", timestamps, humidities, "습도 (%)", "blue");
+        function isDateInRange(entryDate, startDate, endDate) {
+            return entryDate >= startDate && entryDate <= endDate;
         }
 
-        function checkInterval(entryMinute, interval, entryDate) {
-            const hour = entryDate.getHours();
+        function isTimeInRange(entryTime, startTime, endTime) {
+            return entryTime >= startTime && entryTime <= endTime;
+        }
+
+        function checkInterval(entryDate, interval) {
+            const entryMinute = entryDate.getMinutes();
             switch (interval) {
                 case 1:  // 1분마다
                     return true;
@@ -121,11 +162,21 @@
                 }
             });
         }
+
+        // 페이지 로드 시 현재 날짜와 시간 표시
+        window.onload = function() {
+            displayCurrentDateTime();
+            // 1초마다 날짜 및 시간 최신화
+            setInterval(displayCurrentDateTime, 1000);
+        };
     </script>
 </head>
 <body>
-    <h1>ESP32 온습도 그래프</h1>
-    <label>날짜 선택: <input type="date" id="datePicker"></label>
+    <h1>온습도</h1>
+    <p><span id="currentDateTime"></span></p>
+
+    <label>시작 날짜: <input type="date" id="startDate"></label>
+    <label>종료 날짜: <input type="date" id="endDate"></label>
     <label>간격 선택: 
         <select id="intervalPicker">
             <option value="1">1분</option>
@@ -135,10 +186,14 @@
             <option value="5">1시간</option>
         </select>
     </label>
+    <label>시작 시간: <input type="time" id="startTime" value="00:00"></label>
+    <label>종료 시간: <input type="time" id="endTime" value="23:59"></label>
     <button id="fetchData">데이터 불러오기</button>
-    <h2>온도 그래프</h2>
+
+    <h2>온도 <span id="currentTemp"></span></h2>
     <canvas id="tempChart"></canvas>
-    <h2>습도 그래프</h2>
+
+    <h2>습도 <span id="currentHum"></span></h2>
     <canvas id="humChart"></canvas>
 </body>
 </html>
